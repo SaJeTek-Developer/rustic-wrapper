@@ -21,7 +21,10 @@ ftp_pget=10
 #log_file="/var/log/rustic-wrapper_log.txt"
 #time in hours
 job_max_time=6
+
+#used in csv file for passwords with commas
 comma_placeholder="__comma__"
+#used in csv file to separate multiple db credentials
 db_seperator="||"
 #END MODIFY HERE
 
@@ -764,6 +767,7 @@ backup() {
 				if [ "$demo" == "true" ]; then
 					echo -e "rsync -a $exclude ${tmp_mount_point}${mount_point} $path"
 				else
+					echo "sudo pkill -f ${tmp_mount_point}${mount_point} >/dev/null 2>&1" | at now + $job_max_time hours > /dev/null 2>&1
 					rsync -a $exclude ${tmp_mount_point}${mount_point} $path
 				fi
 				echo -e "Copying mounted files COMPLETED!!\n"
@@ -880,9 +884,11 @@ backup() {
 					sudo rm -rf ${tmp_mount_point}${mount_point}
 				fi
 				disallow "$rmount_ip"
+				remove_at_job "${tmp_mount_point}${mount_point}"
 			fi
 			if [[ -v ftp_ip ]]; then
 				disallow "$ftp_ip"
+				remove_at_job "$ftp_ip"
 			fi
 			if [[ -v db_ip ]]; then
 				disallow "$db_ip"
