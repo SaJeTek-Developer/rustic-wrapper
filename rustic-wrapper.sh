@@ -348,7 +348,7 @@ remove_at_job() {
 extract_db_credentials() {
   # Search for .env and wp-config.php files in the current directory and its subdirectories
   
-	find $path -type f -name ".env" -o -name "wp-config.php" | while read -r file; do
+	find $1 -type f -name ".env" -o -name "wp-config.php" | while read -r file; do
 		# Check if the file exists and is not empty
 		if [ ! -s "$file" ]; then
 		  continue
@@ -400,21 +400,20 @@ backup() {
 	get_all_dbs() {
 	
 		local repo=$1
-		local path=$2
+		local path=""
 		local db_backup_path=$3
+	
+		sudo rustic init -r $repo --password "$password"
 		
 		#Don't scan remote paths for databases as this will be very time consuming and the host will most likely be localhost
 		#We only scan for local and not for rclone mounts or ftp locations
 		if [[ -v $4 ]]; then
-			echo "$2"
 			return
 		fi
-		local databases=($(extract_db_credentials))
-	
-		sudo rustic init -r $repo --password "$password"
+		local databases=($(extract_db_credentials "$2"))
 
 		sudo mkdir -p $db_backup_path 2>>/dev/null
-		sudo rm -rf $db_backup_path* >/dev/null 2>&1
+		#sudo rm -rf $db_backup_path* >/dev/null 2>&1
 		
 		# Iterate through the list and run mysqldump for each set
 		if [ "$databases" != "" ]; then
@@ -557,7 +556,11 @@ backup() {
 			IFS=' ' read -ra flag_excludes <<< "$flag_exclude"
 			for item in "${flag_excludes[@]}"; do
 				item=$(strip_leading_slashes "$item")
-				exclude="$exclude --glob !${path}/${item}"
+				if [[ "$item" == *[*?]* ]]; then
+					exclude="$exclude --glob '!${path}/${item}'"
+				else
+					exclude="$exclude --exclude-if-present '${path}/${item}'"
+				fi
 			done
 		fi
 			
@@ -572,20 +575,20 @@ backup() {
   
 		if [ "$demo" == "true" ]; then
 			echo -e "find $path -type f -name \".env\" -o -name \"wp-config.php\""
-			echo -e $(get_all_dbs "$repo" "$path" "$temp_db_path")
+			echo -e "$path $(get_all_dbs "$repo" "$path" "$temp_db_path")"
 			echo -e "sudo rustic -r $repo backup $path --password \"NOT_REAL_PASSWORD\" $exclude"
 		else
-			path=$(get_all_dbs "$repo" "$path" "$temp_db_path")
+			path+=$(get_all_dbs "$repo" "$path" "$temp_db_path")
 			if [ "$path" == "" ]; then
 				echo -e "Nothing to backup!"
 			fi
-			sudo rustic -r $repo backup $path --password "$password" $exclude
+			eval "sudo rustic -r $repo backup $path --password \"$password\" $exclude"
 			if [ "$retention" != "" ]; then
 				instant=""
 				if [[ -v flag_clean ]]; then
 					instant="--instant-delete"
 				fi
-				sudo rustic -r $repo forget --keep-daily $retention --prune $instant --password "$password"
+				eval "sudo rustic -r $repo forget --keep-daily $retention --prune $instant --password \"$password\""
 			fi
 		fi
 		
@@ -641,6 +644,7 @@ backup() {
 			#continue
 			
 			path=$(strip_trailing_slashes "$path")
+			files_path="$path"
 			password=$(re_comma "$password")
 			
 			base="$backup_base"
@@ -690,6 +694,7 @@ backup() {
 				fi
 				remote_path="$path"
 				path="${backup_base}${mount_point}files"
+				files_path="$path"
 				all_temp_paths+=" $path"
 				sudo mkdir -p $path
 				
@@ -748,6 +753,7 @@ backup() {
 				echo -e "\nMounted remote path\n"
 				
 				path="${backup_base}${mount_point}files"
+				files_path="$path"
 				all_temp_paths+=" $path"
 				sudo mkdir -p $path
 		
@@ -781,9 +787,14 @@ backup() {
 				IFS=' ' read -ra flag_excludes <<< "$excludes"
 				for item in "${flag_excludes[@]}"; do
 					item=$(strip_leading_slashes "$item")
-					exclude="$exclude --glob !${path}/${item}"
+					if [[ "$item" == *[*?]* ]]; then
+						exclude="$exclude --glob '!${path}/${item}'"
+					else
+						exclude="$exclude --exclude-if-present '${path}/${item}'"
+					fi
 				done
 			fi
+			exclude=$(trim "$exclude")
 			
 			#--------------------------------------------------DB--------------------------------------------------
 			#get main db if listed
@@ -849,11 +860,11 @@ backup() {
   
 			if [ "$demo" == "true" ]; then
 				echo -e "find $path -type f -name \".env\" -o -name \"wp-config.php\" "
-				echo -e $(get_all_dbs "$repo" "$path" "$temp_db_path" "$remote")
+				echo -e "$path $(get_all_dbs "$repo" "$files_path" "$temp_db_path" "$remote")"
 				echo -e "Searching for databases to backup COMPLETED!!"
 				echo -e "sudo rustic -r $repo backup $path --password \"NOT_REAL_PASSWORD\" $exclude"
 			else
-				path=$(get_all_dbs "$repo" "$path" "$temp_db_path" "$remote")
+				path+=$(get_all_dbs "$repo" "$files_path" "$temp_db_path" "$remote")
 				echo -e "Searching for databases to backup COMPLETED!!\n"
 				
 				if [ $(trim "$path") == "" ]; then
@@ -861,16 +872,15 @@ backup() {
 					continue
 				fi
 				#add the files exported using the -m list
-				sudo rustic -r $repo backup $path --password "$password" $exclude
+				eval "sudo rustic -r $repo backup $path $exclude --password \"$password\""
 				if [ "$retention" != "" ]; then
 					instant=""
 					if [[ -v flag_clean ]]; then
 						instant="--instant-delete"
 					fi
-					sudo rustic -r $repo forget --keep-daily $retention --prune $instant --password "$password"
+					eval "sudo rustic -r $repo forget --keep-daily $retention --prune $instant --password \"$password\""
 				fi
 			fi
-			
 			#--------------------------------------------------CLEANUP--------------------------------------------------
 			
 			#cleanup
@@ -884,11 +894,9 @@ backup() {
 					sudo rm -rf ${tmp_mount_point}${mount_point}
 				fi
 				disallow "$rmount_ip"
-				remove_at_job "${tmp_mount_point}${mount_point}"
 			fi
 			if [[ -v ftp_ip ]]; then
 				disallow "$ftp_ip"
-				remove_at_job "$ftp_ip"
 			fi
 			if [[ -v db_ip ]]; then
 				disallow "$db_ip"
