@@ -721,6 +721,7 @@ backup() {
 					echo "sudo pkill -f $script_file >/dev/null 2>&1" | at now + $job_max_time hours > /dev/null 2>&1
 					$(echo "sleep 5 ; sudo rm -f $script_file >/dev/null 2>&1" | at now > /dev/null 2>&1)
 					sudo lftp -f "$script_file"
+					remove_at_job "$script_file"
 					#export LFTP_PASSWORD="$original_pass"
 					#sudo lftp -e "set ssl:verify-certificate no; cd /$remote_path; mirror -c --only-missing $last_time $exclude --skip-noaccess --parallel=$ftp_parallel_downloads --use-pget-n=$ftp_pget ./ $path; quit" --user "${ftp_fields[1]}" --env-password -p ${ftp_fields[3]} ftp://$ip
 				fi
@@ -775,6 +776,7 @@ backup() {
 				else
 					echo "sudo pkill -f ${tmp_mount_point}${mount_point} >/dev/null 2>&1" | at now + $job_max_time hours > /dev/null 2>&1
 					rsync -a $exclude ${tmp_mount_point}${mount_point} $path
+					remove_at_job "${tmp_mount_point}${mount_point}"
 				fi
 				echo -e "Copying mounted files COMPLETED!!\n"
 			fi
