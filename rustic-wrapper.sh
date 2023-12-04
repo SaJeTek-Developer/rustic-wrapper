@@ -31,6 +31,9 @@ db_seperator="||"
 job_max_secs=$((job_max_time * 60 * 60))
 #sudo touch $log_file
 
+# Set the PATH explicitly
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
 # Check if a command argument is provided
 if [ $# -lt 1 ]; then
   echo -e "Usage: $0 [backup | delete | restore | snapshots | merge | info | prune]\n
@@ -251,6 +254,8 @@ allow() {
 		sudo iptables -D OUTPUT -d $ip -j ACCEPT >/dev/null 2>&1
 		sudo iptables -A OUTPUT -d $ip -j ACCEPT >/dev/null 2>&1
 		echo "sudo iptables -D OUTPUT -d $ip -j ACCEPT >/dev/null 2>&1" | at now + $job_max_time hour > /dev/null 2>&1
+	else
+		echo -e "Something went wrong"
 	fi
 }
 
@@ -264,6 +269,8 @@ disallow() {
 		sudo firewall-cmd --reload >/dev/null 2>&1
 	elif [ $(command -v iptables) != "" ];then
 		sudo iptables -D OUTPUT -d $ip -j ACCEPT >/dev/null 2>&1
+	else
+		echo -e "Something went wrong"
 	fi
 }
 
@@ -896,9 +903,11 @@ backup() {
 					sudo rm -rf ${tmp_mount_point}${mount_point}
 				fi
 				disallow "$rmount_ip"
+				rm -rf $files_path
 			fi
 			if [[ -v ftp_ip ]]; then
 				disallow "$ftp_ip"
+				rm -rf $files_path
 			fi
 			if [[ -v db_ip ]]; then
 				disallow "$db_ip"
