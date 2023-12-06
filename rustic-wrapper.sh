@@ -3,6 +3,7 @@
 
 #MODIFY HERE
 demo="false"
+log="true"
 
 #NO LONGER NEEDED/USED as the list allows multiple mysql entries with a seperator
 #specify your default db creds here if the site is not laravel or wordpress and it's a local database
@@ -18,7 +19,7 @@ backup_base="/home/backup/"
 tmp_mount_point="/mnt/remote/"
 ftp_parallel_downloads=10
 ftp_pget=10
-#log_file="/var/log/rustic-wrapper_log.txt"
+log_file="/var/log/rustic-wrapper.log"
 #time in hours
 job_max_time=6
 
@@ -29,7 +30,12 @@ db_seperator="||"
 #END MODIFY HERE
 
 job_max_secs=$((job_max_time * 60 * 60))
-#sudo touch $log_file
+sudo touch $log_file
+
+if [ "$log" == "true" ]; then
+	# Redirect standard output and standard error to the file and the terminal
+	exec > >(tee -a "$log_file") 2>&1
+fi
 
 # Set the PATH explicitly
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -236,7 +242,7 @@ allow() {
 	install_at
 	ip=$(resolve_ip "$1")
 	
-	if [[ -v $2 ]] && is_integer "$2"; then
+	if [[ -n $2 && -v 2 ]] && is_integer "$2"; then
 		local job_max_time=$(expr "$2" + 0)
 		local job_max_secs=$((job_max_time * 60 * 60))
 	fi
@@ -293,7 +299,7 @@ secure_dump() {
 	mysqldump --defaults-file="$mysql_tmp_config" --single-transaction --quick --lock-tables=false --no-tablespaces $4 > "$5"
 }
 
-get_latest_snapshot_time() {
+get_latest_snapshot() {
 	#Get snapshot data
 	result=$(sudo rustic -r $1 snapshots --json --password "$2" 2>>/dev/null)
 	if [ "$result" == "" ]; then
@@ -311,21 +317,29 @@ get_latest_snapshot_time() {
 	# Iterate over each object in the array
 	while read -r snapshot_data; do
 		# Extract time and paths
+		#time format = "2023-11-03T10:15:01.886925223-04:00"
 		time=$(jq -r '.time' <<< "$snapshot_data")
 		id=$(jq -r '.id' <<< "$snapshot_data")
 		paths=$(jq -r '.paths' <<< "$snapshot_data")
+		
+		# Convert times to Unix timestamps
+		time_timestamp=$(date -d "$time" +%s)
+		latest_time_timestamp=$(date -d "$latest_time" +%s)
 
 		# Check if the paths match
 		if [[ "$paths" == *"$path"* ]]; then
 			# Check if time is more recent
-			if [[ "$time" > "$latest_time" ]]; then
+			if [ "$latest_time" == "" ] || [ "$time_timestamp" -ge "$latest_time_timestamp" ]; then
 				latest_time="$time"
 				latest_id="$id"
 			fi
 		fi
 	done <<< "$(jq -c '.[0][1][]' <<< "$result")"
-
-	echo "$latest_time"
+	if [ "$4" == "id" ];then
+		echo "$latest_id"
+	elif [ "$4" == "time" ];then
+		echo "$latest_time"
+	fi
 }
 
 get_at_time() {
@@ -342,7 +356,7 @@ remove_at_job() {
 	# Loop through each line in the job list
 	echo "$job_list" | while read -r job_line; do
 		# Check if the target string is present in the job line
-		if [[ $job_line == *"$target_string"* ]]; then
+		if [[ "$job_line" == *"$target_string"* ]]; then
 			# Extract the job ID
 			job_id=$(echo "$job_line" | awk '{print $1}')
 			# Remove the job
@@ -363,9 +377,9 @@ extract_db_credentials() {
 
 		# Determine the file type based on the extension
 		file_type=""
-		if [[ "$file" == *.env ]]; then
+		if [[ "$file" == *".env" ]]; then
 		  file_type="env"
-		elif [[ "$file" == *wp-config.php ]]; then
+		elif [[ "$file" == *"wp-config.php" ]]; then
 		  file_type="wp-config"
 		fi
 
@@ -414,7 +428,7 @@ backup() {
 		
 		#Don't scan remote paths for databases as this will be very time consuming and the host will most likely be localhost
 		#We only scan for local and not for rclone mounts or ftp locations
-		if [[ -v $4 ]]; then
+		if [[ -n $4 && -v 4 ]]; then
 			return
 		fi
 		local databases=($(extract_db_credentials "$2"))
@@ -706,8 +720,9 @@ backup() {
 				sudo mkdir -p $path
 				
 				last_time=""
-				if [ "$ftp_continue" != "" ] || [ "$ftp_continue" != 0 ]; then
-					last_time=$(get_latest_snapshot_time "$repo" "$password" "$path")
+				if [ "$ftp_continue" != "" ] && [ "$ftp_continue" != "0" ]; then
+					last_time=$(get_latest_snapshot "$repo" "$password" "$path" "time")
+					last_id=$(get_latest_snapshot "$repo" "$password" "$path" "id")
 					if [ "$last_time" != "" ];then
 						at_time=$(get_at_time $(date -d "$last_time" "+%s"))
 						last_time="--newer-than=\"$at_time\""
@@ -777,12 +792,34 @@ backup() {
 				echo -e "rclone is very slow, consider using ftp instead"
 				sleep 3
 				
+				last_time=""
+				if [ "$ftp_continue" != "" ] && [ "$ftp_continue" != "0" ]; then
+					last_time=$(get_latest_snapshot "$repo" "$password" "$files_path" "time")
+					last_id=$(get_latest_snapshot "$repo" "$password" "$files_path" "id")
+					if [ "$last_time" != "" ];then
+						at_time=$(get_at_time $(date -d "$last_time" "+%s"))
+					fi
+		
+					exclude=""
+					if [ "" != "$excludes" ]; then
+						IFS=' ' read -ra flag_excludes <<< "$excludes"
+						for item in "${flag_excludes[@]}"; do
+							item=$(strip_leading_slashes "$item")
+							exclude="$exclude ! -path \"${item}\""
+						done
+					fi
+				fi
+				
 				echo -e "Copying mounted files"
 				if [ "$demo" == "true" ]; then
 					echo -e "rsync -a $exclude ${tmp_mount_point}${mount_point} $path"
 				else
 					echo "sudo pkill -f ${tmp_mount_point}${mount_point} >/dev/null 2>&1" | at now + $job_max_time hours > /dev/null 2>&1
-					rsync -a $exclude ${tmp_mount_point}${mount_point} $path
+					if [ "$last_time" == "" ]; then
+						rsync -a $exclude ${tmp_mount_point}${mount_point} $path
+					else
+						eval "find ${tmp_mount_point}${mount_point} -type f -newermt $at_time $exclude -exec rsync -R {} $path \;"
+					fi
 					remove_at_job "${tmp_mount_point}${mount_point}"
 				fi
 				echo -e "Copying mounted files COMPLETED!!\n"
@@ -882,6 +919,15 @@ backup() {
 				fi
 				#add the files exported using the -m list
 				eval "sudo rustic -r $repo backup $path $exclude --password \"$password\""
+				
+				#Since we used ftp_continue, we merge with the last snapshot to get a complete snapshot
+				if [[ -v last_id ]]; then
+					new_id=$(get_latest_snapshot "$repo" "$password" "$files_path" "id")
+					echo -e "\nMerging $last_id and $new_id\n" 
+					eval "sudo rustic -r $repo merge $last_id $new_id --password \"$password\""
+					sudo rustic -r $repo forget $new_id --prune --password "$password"
+				fi
+				
 				if [ "$retention" != "" ]; then
 					instant=""
 					if [[ -v flag_clean ]]; then
@@ -914,7 +960,8 @@ backup() {
 			fi
 			
 			sudo rm -rf $temp_db_path >/dev/null 2>&1
-			echo -e "\n----------------------------------------------------------\n\n"
+			pkill -f "rclone serve restic"
+			echo -e "\n---------------------------- $(date +"%a %d %b %Y - %I:%M%p") ------------------------------\n\n"
 		done < "$list"
 		
 		echo -e "Removing temporary files & directories\n"
@@ -922,7 +969,9 @@ backup() {
 		if [ "$all_temp_paths" != "" ];then
 			all_temp_paths=($all_temp_paths)
 			for tpath in "${all_temp_paths[@]}"; do
-				sudo rm -rf $tpath >/dev/null 2>&1
+				if [ -d "$tpath" ]; then
+					sudo rm -rf $tpath >/dev/null 2>&1
+				fi
 			done
 		fi
 	fi
