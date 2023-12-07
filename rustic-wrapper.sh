@@ -609,7 +609,7 @@ backup() {
 				if [[ -v flag_clean ]]; then
 					instant="--instant-delete"
 				fi
-				eval "sudo rustic -r $repo forget --keep-daily $retention --prune $instant --password \"$password\""
+				eval "sudo rustic -r $repo forget --keep-within ${retention}d --prune $instant --password \"$password\""
 			fi
 		fi
 		
@@ -755,6 +755,9 @@ backup() {
 				remote="true"
 				install_rclone
 				
+				echo -e "rclone is very slow, consider using ftp instead"
+				sleep 3
+				
 				mount_point=""
 				if [ "$bucket" != "" ]; then
 					mount_point="$bucket/"
@@ -789,9 +792,6 @@ backup() {
 					done
 				fi
 				
-				echo -e "rclone is very slow, consider using ftp instead"
-				sleep 3
-				
 				last_time=""
 				if [ "$ftp_continue" != "" ] && [ "$ftp_continue" != "0" ]; then
 					last_time=$(get_latest_snapshot "$repo" "$password" "$files_path" "time")
@@ -812,13 +812,17 @@ backup() {
 				
 				echo -e "Copying mounted files"
 				if [ "$demo" == "true" ]; then
-					echo -e "rsync -a $exclude ${tmp_mount_point}${mount_point} $path"
+					if [ "$last_time" == "" ]; then
+						echo -e "rsync -a $exclude ${tmp_mount_point}${mount_point} $path"
+					else
+						echo -e "eval \"find ${tmp_mount_point}${mount_point} -type f -newermt '$at_time' $exclude -exec rsync -R {} $path \;\""
+					fi
 				else
 					echo "sudo pkill -f ${tmp_mount_point}${mount_point} >/dev/null 2>&1" | at now + $job_max_time hours > /dev/null 2>&1
 					if [ "$last_time" == "" ]; then
 						rsync -a $exclude ${tmp_mount_point}${mount_point} $path
 					else
-						eval "find ${tmp_mount_point}${mount_point} -type f -newermt $at_time $exclude -exec rsync -R {} $path \;"
+						eval "find ${tmp_mount_point}${mount_point} -type f -newermt '$at_time' $exclude -exec rsync -R {} $path \;"
 					fi
 					remove_at_job "${tmp_mount_point}${mount_point}"
 				fi
@@ -925,7 +929,7 @@ backup() {
 					new_id=$(get_latest_snapshot "$repo" "$password" "$files_path" "id")
 					echo -e "\nMerging $last_id and $new_id\n" 
 					eval "sudo rustic -r $repo merge $last_id $new_id --password \"$password\""
-					sudo rustic -r $repo forget $new_id --prune --password "$password"
+					sudo rustic -r $repo forget $new_id --password "$password"
 				fi
 				
 				if [ "$retention" != "" ]; then
@@ -933,7 +937,7 @@ backup() {
 					if [[ -v flag_clean ]]; then
 						instant="--instant-delete"
 					fi
-					eval "sudo rustic -r $repo forget --keep-daily $retention --prune $instant --password \"$password\""
+					eval "sudo rustic -r $repo forget --keep-within ${retention}d --prune $instant --password \"$password\""
 				fi
 			fi
 			#--------------------------------------------------CLEANUP--------------------------------------------------
@@ -969,6 +973,9 @@ backup() {
 		if [ "$all_temp_paths" != "" ];then
 			all_temp_paths=($all_temp_paths)
 			for tpath in "${all_temp_paths[@]}"; do
+				if [ "$demo" == "true" ]; then
+					echo -e "Removing path: $tpath"
+				fi
 				if [ -d "$tpath" ]; then
 					sudo rm -rf $tpath >/dev/null 2>&1
 				fi
