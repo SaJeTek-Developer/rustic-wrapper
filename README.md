@@ -88,7 +88,9 @@ _______________
 Before running the script, update your settings within the file between the tags #MODIFY HERE and #END MODIFY HERE
 > ./rustic-wrapper.sh backup -l /path/to/csv_file/file.csv
 
-> ./rustic-wrapper.sh backup -r rclone:WASABI_DRIVE -b example.com -e "*.zip *.gz backup cache" -k 120 -p /home/example/public_html/ -c -x "MyPassword"
+> ./rustic-wrapper.sh backup -r rclone:WASABI_DRIVE -b example.com -e "*.zip *.gz backup cache /home/example/public_html/cache" -k 120 -p /home/example/public_html/ -c -x "MyPassword"
+
+Specify full paths to exclude that specific file or folder in excludes
 
 
 **Cron**\
