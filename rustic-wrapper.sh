@@ -4,7 +4,8 @@
 #MODIFY HERE
 demo="false"
 log="true"
-
+rustic_cache="false"
+#set -x
 #NO LONGER NEEDED/USED as the list allows multiple mysql entries with a seperator
 #specify your default db creds here if the site is not laravel or wordpress and it's a local database
 #or
@@ -35,6 +36,12 @@ sudo touch $log_file
 if [ "$log" == "true" ]; then
 	# Redirect standard output and standard error to the file and the terminal
 	exec > >(tee -a "$log_file") 2>&1
+fi
+
+if [ "$rustic_cache" == "true" ]; then
+	caching=""
+else
+	caching="--no-cache"
 fi
 
 # Set the PATH explicitly
@@ -296,12 +303,17 @@ secure_dump() {
 	echo "password=$original_pass" >> $mysql_tmp_config
 	sudo chmod 600 $mysql_tmp_config
 	$(echo "sleep 5 ; sudo rm -f $mysql_tmp_config >/dev/null 2>&1" | at now > /dev/null 2>&1)
-	mysqldump --defaults-file="$mysql_tmp_config" --single-transaction --quick --lock-tables=false --no-tablespaces $4 > "$5"
+	
+	if [ "$log" == "true" ]; then
+		mysqldump --defaults-file="$mysql_tmp_config" --single-transaction --quick --lock-tables=false --no-tablespaces $4 > "$5" 2>>$log_file
+	else
+		mysqldump --defaults-file="$mysql_tmp_config" --single-transaction --quick --lock-tables=false --no-tablespaces $4 > "$5" 2>/dev/null
+	fi
 }
 
 get_latest_snapshot() {
 	#Get snapshot data
-	result=$(sudo rustic -r $1 snapshots --json --password "$2" 2>>/dev/null)
+	result=$(sudo rustic -r $1 $caching snapshots --json --password "$2" 2>>/dev/null)
 	if [ "$result" == "" ]; then
 		echo ""
 		return
@@ -423,8 +435,8 @@ backup() {
 		local repo=$1
 		local path=""
 		local db_backup_path=$3
-	
-		sudo rustic init -r $repo --password "$password"
+		
+		sudo rustic init -r $repo $caching --password "$password"
 		
 		#Don't scan remote paths for databases as this will be very time consuming and the host will most likely be localhost
 		#We only scan for local and not for rclone mounts or ftp locations
@@ -492,7 +504,7 @@ backup() {
 		#	done
 		#fi
 		if [ "$demo" != "true" ]; then
-			echo $(trim "$path")
+			echo "$path"
 		fi
 	}
 	
@@ -577,11 +589,12 @@ backup() {
 			IFS=' ' read -ra flag_excludes <<< "$flag_exclude"
 			for item in "${flag_excludes[@]}"; do
 				item=$(strip_leading_slashes "$item")
-				if [[ "$item" == *[*?]* ]]; then
-					exclude="$exclude --glob '!${path}/${item}'"
-				else
-					exclude="$exclude --exclude-if-present '${path}/${item}'"
-				fi
+				exclude="$exclude --glob '!${item}'"
+				#if [[ "$item" == *[*?]* ]]; then
+				#	exclude="$exclude --glob '!${path}/${item}'"
+				#else
+				#	exclude="$exclude --glob '!${item}'"
+				#fi
 			done
 		fi
 			
@@ -596,20 +609,20 @@ backup() {
   
 		if [ "$demo" == "true" ]; then
 			echo -e "find $path -type f -name \".env\" -o -name \"wp-config.php\""
-			echo -e "$path $(get_all_dbs "$repo" "$path" "$temp_db_path")"
-			echo -e "sudo rustic -r $repo backup $path --password \"NOT_REAL_PASSWORD\" $exclude"
+			echo -e "$path$(get_all_dbs "$repo" "$path" "$temp_db_path")"
+			echo -e "sudo rustic -r $repo $caching backup $path --password \"NOT_REAL_PASSWORD\" $exclude"
 		else
 			path+=$(get_all_dbs "$repo" "$path" "$temp_db_path")
 			if [ "$path" == "" ]; then
 				echo -e "Nothing to backup!"
 			fi
-			eval "sudo rustic -r $repo backup $path --password \"$password\" $exclude"
+			eval "sudo rustic -r $repo $caching backup $path --password \"$password\" $exclude"
 			if [ "$retention" != "" ]; then
 				instant=""
 				if [[ -v flag_clean ]]; then
 					instant="--instant-delete"
 				fi
-				eval "sudo rustic -r $repo forget --keep-within ${retention}d --prune $instant --password \"$password\""
+				eval "sudo rustic -r $repo $caching forget --keep-within ${retention}d --prune $instant --password \"$password\""
 			fi
 		fi
 		
@@ -646,7 +659,7 @@ backup() {
 			local rmount=$(trim "${fields[7]//\"/}")
 			local ftp=$(trim "${fields[8]//\"/}")
 			local job_timeout=$(trim "${fields[9]//\"/}")
-			local ftp_continue=$(trim "${fields[10]//\"/}")
+			local job_continue=$(trim "${fields[10]//\"/}")
 			
 			if [ "$repo" == "" ] || [[ $repo == "repository" ]]; then
 				continue
@@ -720,7 +733,7 @@ backup() {
 				sudo mkdir -p $path
 				
 				last_time=""
-				if [ "$ftp_continue" != "" ] && [ "$ftp_continue" != "0" ]; then
+				if [ "$job_continue" != "" ] && [ "$job_continue" != "0" ]; then
 					last_time=$(get_latest_snapshot "$repo" "$password" "$path" "time")
 					last_id=$(get_latest_snapshot "$repo" "$password" "$path" "id")
 					if [ "$last_time" != "" ];then
@@ -793,7 +806,7 @@ backup() {
 				fi
 				
 				last_time=""
-				if [ "$ftp_continue" != "" ] && [ "$ftp_continue" != "0" ]; then
+				if [ "$job_continue" != "" ] && [ "$job_continue" != "0" ]; then
 					last_time=$(get_latest_snapshot "$repo" "$password" "$files_path" "time")
 					last_id=$(get_latest_snapshot "$repo" "$password" "$files_path" "id")
 					if [ "$last_time" != "" ];then
@@ -837,11 +850,12 @@ backup() {
 				IFS=' ' read -ra flag_excludes <<< "$excludes"
 				for item in "${flag_excludes[@]}"; do
 					item=$(strip_leading_slashes "$item")
-					if [[ "$item" == *[*?]* ]]; then
-						exclude="$exclude --glob '!${path}/${item}'"
-					else
-						exclude="$exclude --exclude-if-present '${path}/${item}'"
-					fi
+					exclude="$exclude --glob '!${item}'"
+					#if [[ "$item" == *[*?]* ]]; then
+					#	exclude="$exclude --glob '!${path}/${item}'"
+					#else
+					#	exclude="$exclude --glob '!${item}'"
+					#fi
 				done
 			fi
 			exclude=$(trim "$exclude")
@@ -910,26 +924,22 @@ backup() {
   
 			if [ "$demo" == "true" ]; then
 				echo -e "find $path -type f -name \".env\" -o -name \"wp-config.php\" "
-				echo -e "$path $(get_all_dbs "$repo" "$files_path" "$temp_db_path" "$remote")"
+				echo -e "$path$(get_all_dbs "$repo" "$files_path" "$temp_db_path" "$remote")"
 				echo -e "Searching for databases to backup COMPLETED!!"
-				echo -e "sudo rustic -r $repo backup $path --password \"NOT_REAL_PASSWORD\" $exclude"
+				echo -e "sudo rustic -r $repo $caching backup $path --password \"NOT_REAL_PASSWORD\" $exclude"
 			else
 				path+=$(get_all_dbs "$repo" "$files_path" "$temp_db_path" "$remote")
 				echo -e "Searching for databases to backup COMPLETED!!\n"
 				
-				if [ $(trim "$path") == "" ]; then
-					echo -e "Nothing to backup!"
-					continue
-				fi
 				#add the files exported using the -m list
-				eval "sudo rustic -r $repo backup $path $exclude --password \"$password\""
+				eval "sudo rustic -r $repo $caching backup $path $exclude --password \"$password\""
 				
-				#Since we used ftp_continue, we merge with the last snapshot to get a complete snapshot
+				#Since we used job_continue, we merge with the last snapshot to get a complete snapshot
 				if [[ -v last_id ]]; then
 					new_id=$(get_latest_snapshot "$repo" "$password" "$files_path" "id")
 					echo -e "\nMerging $last_id and $new_id\n" 
-					eval "sudo rustic -r $repo merge $last_id $new_id --password \"$password\""
-					sudo rustic -r $repo forget $new_id --password "$password"
+					eval "sudo rustic -r $repo $caching merge $last_id $new_id --password \"$password\""
+					sudo rustic -r $repo $caching forget $new_id --password "$password"
 				fi
 				
 				if [ "$retention" != "" ]; then
@@ -937,7 +947,7 @@ backup() {
 					if [[ -v flag_clean ]]; then
 						instant="--instant-delete"
 					fi
-					eval "sudo rustic -r $repo forget --keep-within ${retention}d --prune $instant --password \"$password\""
+					eval "sudo rustic -r $repo $caching forget --keep-within ${retention}d --prune $instant --password \"$password\""
 				fi
 			fi
 			#--------------------------------------------------CLEANUP--------------------------------------------------
@@ -989,7 +999,7 @@ delete() {
 	if [ "$ids" == "" ]; then
 		#Since the array is empty, we need to ask for the snapshot ID
 		echo -e "Snapshots listed below:"
-		sudo rustic -r $repo snapshots --password "$password"
+		sudo rustic -r $repo $caching snapshots --password "$password"
 		
 		echo -e "Enter snapshot id:"
 		read snapshot_id
@@ -998,9 +1008,9 @@ delete() {
 		# Add your delete logic here
   
 		if [ "$demo" == "true" ]; then
-			echo -e "sudo rustic -r $repo forget $snapshot_id --prune --password \"NOT_REAL_PASSWORD\""
+			echo -e "sudo rustic -r $repo $caching forget $snapshot_id --prune --password \"NOT_REAL_PASSWORD\""
 		else
-			sudo rustic -r $repo forget $snapshot_id --prune --password "$password"
+			sudo rustic -r $repo $caching forget $snapshot_id --prune --password "$password"
 		fi
 	else
 		local ids=($ids)
@@ -1012,16 +1022,16 @@ delete() {
 			# Add your delete logic here
   
 			if [ "$demo" == "true" ]; then
-				echo -e "sudo rustic -r $repo forget $snapshot_id --prune --password \"NOT_REAL_PASSWORD\""
+				echo -e "sudo rustic -r $repo $caching forget $snapshot_id --prune --password \"NOT_REAL_PASSWORD\""
 			else
-				sudo rustic -r $repo forget $snapshot_id --password "$password"
+				sudo rustic -r $repo $caching forget $snapshot_id --password "$password"
 			fi
 		done
   
 		if [ "$demo" == "true" ]; then
-			echo -e "sudo rustic -r $repo prune --password \"NOT_REAL_PASSWORD\""
+			echo -e "sudo rustic -r $repo $caching prune --password \"NOT_REAL_PASSWORD\""
 		else
-			sudo rustic -r $repo prune --password "$password"
+			sudo rustic -r $repo $caching prune --password "$password"
 		fi
 	fi
 }
@@ -1037,7 +1047,7 @@ restore() {
 		read snapshot_to_restore
 		
 		#Now we get snapshot data to see if it's valid
-		result=$(sudo rustic -r $repo snapshots $snapshot_to_restore --json --password "$password" 2>>/dev/null)
+		result=$(sudo rustic -r $repo $caching snapshots $snapshot_to_restore --json --password "$password" 2>>/dev/null)
 		if [ "$result" == "" ] || [ "$result" == "[]" ]; then
 			echo "Error: no suitable id found for $snapshot_to_restore"
 			exit 1
@@ -1086,9 +1096,9 @@ restore() {
 				# Add your restore logic here
   
 				if [ "$demo" == "true" ]; then
-					echo -e "sudo rustic -r $repo restore $snapshot_to_restore $destination --password ''"
+					echo -e "sudo rustic -r $repo $caching restore $snapshot_to_restore $destination --password ''"
 				else
-					sudo rustic -r $repo restore $snapshot_to_restore $destination --password "$password"
+					sudo rustic -r $repo $caching restore $snapshot_to_restore $destination --password "$password"
 				fi
 				break  # Exit the loop if valid input is received
 			elif [ "$all" = "n" ] || [ "$all" = "N" ]; then
@@ -1099,9 +1109,9 @@ restore() {
 				while IFS= read -r -d ' ' path; do
   
 					if [ "$demo" == "true" ]; then
-						echo -e "sudo rustic -r $repo restore $snapshot_to_restore:$path $destination --password ''"
+						echo -e "sudo rustic -r $repo $caching restore $snapshot_to_restore:$path $destination --password ''"
 					else
-						sudo rustic -r $repo restore $snapshot_to_restore:$path $destination/$path --password "$password"
+						sudo rustic -r $repo $caching restore $snapshot_to_restore:$path $destination/$path --password "$password"
 					fi
 				done <<< "$destinations "
 				
@@ -1118,7 +1128,7 @@ restore() {
 		final_path="$destination"
 		
 		#Now we get snapshot data to see if it's valid
-		result=$(sudo rustic -r $repo snapshots $snapshot_to_restore --json --password "$password" 2>>/dev/null)
+		result=$(sudo rustic -r $repo $caching snapshots $snapshot_to_restore --json --password "$password" 2>>/dev/null)
 		if [ "$result" == "" ]; then
 			echo "Error: no suitable id found for $snapshot_to_restore"
 			exit 1
@@ -1130,17 +1140,17 @@ restore() {
 			#Restore all
   
 			if [ "$demo" == "true" ]; then
-				echo -e "sudo rustic -r $repo restore $snapshot_to_restore $destination --password \"NOT_REAL_PASSWORD\""
+				echo -e "sudo rustic -r $repo $caching restore $snapshot_to_restore $destination --password \"NOT_REAL_PASSWORD\""
 			else
-				sudo rustic -r $repo restore $snapshot_to_restore $destination --password "$password"
+				sudo rustic -r $repo $caching restore $snapshot_to_restore $destination --password "$password"
 			fi
 		else
 			while IFS= read -r -d ' ' path; do
   
 				if [ "$demo" == "true" ]; then
-					echo -e "sudo rustic -r $repo restore $snapshot_to_restore:$path $destination --password ''"
+					echo -e "sudo rustic -r $repo $caching restore $snapshot_to_restore:$path $destination --password ''"
 				else
-					sudo rustic -r $repo restore $snapshot_to_restore:$path $destination/$path --password "$password"
+					sudo rustic -r $repo $caching restore $snapshot_to_restore:$path $destination/$path --password "$password"
 				fi
 			done <<< "$paths_to_restore "
 		fi
@@ -1152,7 +1162,7 @@ restore() {
 snapshots() {
 	echo "Viewing snapshots..."
 	# Add your snapshots logic here
-	sudo rustic -r $repo snapshots $ids --password "$password"
+	sudo rustic -r $repo $caching snapshots $ids --password "$password"
 }
 
 merge() {
@@ -1162,9 +1172,9 @@ merge() {
 	if [ "$ids" != "" ];then
   
 		if [ "$demo" == "true" ]; then
-			echo -e "sudo rustic -r $repo merge $ids --password \"NOT_REAL_PASSWORD\""
+			echo -e "sudo rustic -r $repo $caching merge $ids --password \"NOT_REAL_PASSWORD\""
 		else
-			sudo rustic -r $repo merge $ids --password "$password"
+			sudo rustic -r $repo $caching merge $ids --password "$password"
 			if [[ -v flag_clean ]]; then
 				#delete the same ids that were merged and prune
 				delete
@@ -1173,7 +1183,7 @@ merge() {
 		fi
 	else
 		#Now we get snapshot data to see if it's valid
-		result=$(sudo rustic -r $repo snapshots --json --password "$password" 2>>/dev/null)
+		result=$(sudo rustic -r $repo $caching snapshots --json --password "$password" 2>>/dev/null)
 		if [ "$result" == "" ]; then
 			echo "Error: no snapshots to merge"
 			exit 1
@@ -1187,9 +1197,9 @@ merge() {
 			fi
   
 			if [ "$demo" == "true" ]; then
-				echo -e "sudo rustic -r $repo merge $ids --password \"NOT_REAL_PASSWORD\""
+				echo -e "sudo rustic -r $repo $caching merge $ids --password \"NOT_REAL_PASSWORD\""
 			else
-				sudo rustic -r $repo merge $ids --password "$password"
+				sudo rustic -r $repo $caching merge $ids --password "$password"
 			fi
 			
 			#remove previous ids
@@ -1217,9 +1227,9 @@ prune() {
 	fi
   
 	if [ "$demo" == "true" ]; then
-		echo -e "sudo rustic prune -r $repo $instant --password \"NOT_REAL_PASSWORD\""
+		echo -e "sudo rustic prune -r $repo $caching $instant --password \"NOT_REAL_PASSWORD\""
 	else
-		sudo rustic prune -r $repo $instant --password "$password"
+		sudo rustic prune -r $repo $caching $instant --password "$password"
 	fi
 }
 
