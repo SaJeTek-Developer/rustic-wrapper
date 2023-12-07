@@ -13,6 +13,8 @@ A bash script for Rhel systems using [Rustic](https://github.com/rustic-rs/rusti
 > chmod 400 /root/file.csv
 
 ### Settings
+demo mode\
+logging\
 parallell downloads for FTP - default: 10\
 max job time - default: 6hrs
 
