@@ -16,13 +16,17 @@ rustic_cache="false"
 #  "hostlocal,database2,user2,password2"
 #  "hostremote,database3,user3,password3"
 #)
-backup_base="/home/backup/"
+backup_base="/home/backup/rustic-wrapper/"
 tmp_mount_point="/mnt/remote/"
 ftp_parallel_downloads=10
 ftp_pget=10
 log_file="/var/log/rustic-wrapper.log"
 #time in hours
 job_max_time=6
+
+#default level 1 directories to exclude when doing a local backup
+local_excluded_dirs=("vmail backup backups cyberpanel clamav virtfs cPanelInstall htroot docker")  # Array of names to exclude
+local_backup_dir="home"
 
 #used in csv file for passwords with commas
 comma_placeholder="__comma__"
@@ -64,6 +68,12 @@ if [ $# -lt 1 ]; then
   -p path to backup					e.g. -p \"/home/back/me/up\"
   -c:optional instant delete when pruning
   -n:optional backup files newer than last snapshot time
+  
+  [local_backup]
+  -e:optional files_or_folders_to_exclude		e.g. -e \"wp-content/cache wp-content/litespeed wp-content/backup/ *.zip\"
+  -k:optional number of days to keep			e.g.	-k 90
+  -c:optional instant delete when pruning
+  -p:optional level 1 directories to exclude, this replaces local_excluded_dirs
   
   [snapshots]
   -i:optional snapshot to view			e.g.	-i jsd5jsdj
@@ -249,7 +259,7 @@ allow() {
 	install_at
 	ip=$(resolve_ip "$1")
 	
-	if [[ -n $2 && -v 2 ]] && is_integer "$2"; then
+	if [[ -n $2 ]] && is_integer "$2"; then
 		local job_max_time=$(expr "$2" + 0)
 		local job_max_secs=$((job_max_time * 60 * 60))
 	fi
@@ -429,6 +439,14 @@ extract_db_credentials() {
 backup() {
 	local path="$path"
 	all_temp_paths=""
+	if [ -n "$1" ] && [ -n "$2" ]; then
+		local repo="${backup_base}$1"
+		path="$2"
+		if [ -n "$3" ]; then
+			repo=$(strip_trailing_slashes "$3")
+			repo="$repo/$1"
+		fi
+	fi
 	
 	get_all_dbs() {
 	
@@ -440,7 +458,7 @@ backup() {
 		
 		#Don't scan remote paths for databases as this will be very time consuming and the host will most likely be localhost
 		#We only scan for local and not for rclone mounts or ftp locations
-		if [[ -n $4 && -v 4 ]]; then
+		if [[ -n $4 ]]; then
 			return
 		fi
 		local databases=($(extract_db_credentials "$2"))
@@ -994,6 +1012,27 @@ backup() {
 	fi
 }
 
+local_backup() {
+	# Function to capture directories in home excluding specified names
+	local home_dir="/$local_backup_dir/"
+	if [ "$path" != "" ];then
+		local_excluded_dirs=("$path")
+	fi
+	
+	# Use find to list directories in home
+	local directories=()
+	while IFS= read -r -d '' dir; do
+		# Extract directory name from the path
+		dir_name=$(basename "$dir")
+		
+		# Check if the directory name is not in the excluded names array
+		if [[ ! " ${local_excluded_dirs[@]} " =~ " $dir_name " && "$dir" != "$home_dir" ]]; then
+			directories+=("$dir")
+			backup "$dir_name" "$dir" "$flag_repo"
+		fi
+	done < <(find "$home_dir" -maxdepth 1 -type d -print0)
+}
+
 delete() {
 	
 	if [ "$ids" == "" ]; then
@@ -1265,7 +1304,7 @@ do
 	esac
 done
 
-if [ -z "$flag_repo" ] && [ -z "$flag_list" ]; then
+if [ -z "$flag_repo" ] && { [ -z "$flag_list" ] && [ "$primary_command" != "local_backup" ]; }; then
 	echo -e "No Repository provided, please provide a repository by passing -r reponame"
 	exit
 else
@@ -1346,6 +1385,10 @@ fi
 case "$primary_command" in
   "backup")
     backup
+    ;;
+	
+  "local_backup")
+    local_backup
     ;;
 
   "delete")
