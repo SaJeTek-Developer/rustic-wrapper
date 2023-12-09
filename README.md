@@ -13,10 +13,13 @@ A bash script for Rhel systems using [Rustic](https://github.com/rustic-rs/rusti
 > chmod 400 /root/file.csv
 
 ### Settings
+Modify default settings in file to your liking\
 demo mode - default: "false"\
 logging - default: "true"\
 parallell downloads for FTP - default: 10\
-max job time - default: 6hrs
+max job time - default: 6hrs\
+rustic cache - default: "false"\
+default level 1 directories to exclude in local backups: "vmail backup backups cyberpanel clamav virtfs cPanelInstall htroot docker"
 
 ### Requirements
 **Atomatically installs**\
@@ -29,7 +32,7 @@ jq
 _______________
 
 **Usage:**\
-./rustic-wrapper.sh [backup | delete | restore | snapshots | merge | info | prune]
+./rustic-wrapper.sh [backup | local_backup | delete | restore | snapshots | merge | info | prune]
 
   [additional flags...]\
   **[global]**
@@ -48,6 +51,15 @@ _______________
   -p path to backup					        e.g. -p "/home/back/me/up"
   -c:optional instant delete when pruning
   -n:optional backup files newer than last snapshot time
+  ```
+  
+  **[local_backup]**
+  ```
+  -r:optional repo/backup path
+  -e:optional files_or_folders_to_exclude    e.g. -e \"wp-content/cache wp-content/litespeed wp-content/backup/ *.zip\"
+  -k:optional number of days to keep      e.g.	-k 90
+  -c:optional instant delete when pruning
+  -p:optional level 1 directories to exclude, this replaces local_excluded_dirs
   ```
   
   **[snapshots]**
@@ -91,7 +103,19 @@ Before running the script, update your settings within the file between the tags
 > ./rustic-wrapper.sh backup -r rclone:WASABI_DRIVE -b example.com -e "*.zip *.gz backup cache /home/example/public_html/cache" -k 120 -p /home/example/public_html/ -c -x "MyPassword"
 
 Specify full paths to exclude that specific file or folder in excludes
+e.g. if you want to exclude /home/test/cache but backup all other cache folders specify: -e "/home/test/cache backup *.zip"
+e.g. if you want to exclude all cache directories specify: -e "cache backup *.zip"
 
 
 **Cron**\
-0 0 * * * /root/rustic-wrapper.sh backup -l /path/to/csv_file/file.csv
+#Generally used to backup offsite locations using ftp or preconfigured rclone configs
+> 0 0 * * * /root/rustic-wrapper.sh backup -l /path/to/csv_file/file.csv
+
+#backup all directories in the /home/ directory to the default backup path
+> 0 0 * * * /root/rustic-wrapper.sh local_backup
+
+#backup all directories (except listed) in the /home/ directory to the default backup path
+> 0 0 * * * /root/rustic-wrapper.sh local_backup -p "mysql test backup backups"
+
+#backup all directories (except listed) in the /home/ directory to the repo path specified (can be used to backup to an NFS mounted path)
+> 0 0 * * * /root/rustic-wrapper.sh local_backup -p "mysql test backup backups" -r /home/local-rustic-wrapper/
