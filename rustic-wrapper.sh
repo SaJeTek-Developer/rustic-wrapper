@@ -34,6 +34,8 @@ comma_placeholder="__comma__"
 db_seperator="||"
 #END MODIFY HERE
 
+
+
 job_max_secs=$((job_max_time * 60 * 60))
 sudo touch $log_file
 
@@ -144,6 +146,16 @@ install_rclone() {
 		sudo yum install -y rclone 2>>/dev/null
 		echo -e "rclone Installed"
 	fi
+	installed=$(sudo yum list installed|grep fuse3.x86_64)
+	if [ "$installed" == "" ]; then
+		sudo yum install -y fuse3 2>>/dev/null
+		echo -e "fuse3 Installed"
+	fi
+	installed=$(sudo yum list installed|grep fuse3-devel.x86_64)
+	if [ "$installed" == "" ]; then
+		sudo yum install -y fuse3-devel 2>>/dev/null
+		echo -e "fuse3-devel Installed"
+	fi
 }
 
 re_comma() {
@@ -162,6 +174,18 @@ is_base64_encoded() {
     else
         return 1  # Failure
     fi
+}
+
+ask_yes_no() {
+    local question="$1"
+	response=""
+
+    while [[ "$response" != "y" && "$response" != "n" ]]; do
+        echo -e -n "\n$question (y/n): "
+		read response
+    done
+
+    echo -e "You entered: $response\n"
 }
 
 trim() {
@@ -315,9 +339,10 @@ secure_dump() {
 	$(echo "sleep 5 ; sudo rm -f $mysql_tmp_config >/dev/null 2>&1" | at now > /dev/null 2>&1)
 	
 	if [ "$log" == "true" ]; then
-		mysqldump --defaults-file="$mysql_tmp_config" --single-transaction --quick --lock-tables=false --no-tablespaces $4 > "$5" 2>>$log_file
+		#use --force to skip errors like crashed tables etc
+		mysqldump --defaults-file="$mysql_tmp_config" --single-transaction --quick --lock-tables=false --no-tablespaces --skip-lock-tables --force $4 > "$5" 2>>$log_file
 	else
-		mysqldump --defaults-file="$mysql_tmp_config" --single-transaction --quick --lock-tables=false --no-tablespaces $4 > "$5" 2>/dev/null
+		mysqldump --defaults-file="$mysql_tmp_config" --single-transaction --quick --lock-tables=false --no-tablespaces --skip-lock-tables --force $4 > "$5" 2>/dev/null
 	fi
 }
 
@@ -462,6 +487,8 @@ backup() {
 			return
 		fi
 		local databases=($(extract_db_credentials "$2"))
+		#make sure it's a proper array
+		mapfile -t databases <<< "$databases"
 
 		sudo mkdir -p $db_backup_path 2>>/dev/null
 		#sudo rm -rf $db_backup_path* >/dev/null 2>&1
@@ -803,8 +830,8 @@ backup() {
 				allow "$rmount_ip" "$job_timeout"
 				sleep 2
 				
-				#echo -e "rclone mount $rmount:$path ${tmp_mount_point}${mount_point} &"
-				rclone mount $rmount:$path ${tmp_mount_point}${mount_point} &
+				#echo -e "rclone mount $rmount:$path ${tmp_mount_point}${mount_point} --bind 0.0.0.0 &"
+				rclone mount $rmount:$path ${tmp_mount_point}${mount_point} --bind 0.0.0.0 &
 				
 				sleep 5
 				echo -e "\nMounted remote path\n"
@@ -1078,18 +1105,30 @@ delete() {
 restore() {
 	
 	if [ "$snapshot_id" == "" ]; then
-		#No options present so we prompt
-		echo -e "Snapshots listed below:"
-		sudo rustic -r $repo snapshots --password "$password"
 		
-		echo -e "Enter snapshot id:"
-		read snapshot_to_restore
+		ask_yes_no "Get latest snapshot?"
+		if [ "$response" == "y" ]; then
+				echo -e "Getting latest snapshot"
+				snapshot_id=$(get_latest_snapshot "$repo" "$password" "$path" "id")
+				if [ "$snapshot_id" == "" ] || [ "$snapshot_id" == "[]" ]; then
+				echo "Error: no suitable id found for $snapshot_to_restore"
+				exit 1
+			fi
+		else
 		
-		#Now we get snapshot data to see if it's valid
-		result=$(sudo rustic -r $repo $caching snapshots $snapshot_to_restore --json --password "$password" 2>>/dev/null)
-		if [ "$result" == "" ] || [ "$result" == "[]" ]; then
-			echo "Error: no suitable id found for $snapshot_to_restore"
-			exit 1
+			#No options present so we prompt
+			echo -e "Snapshots listed below:"
+			sudo rustic -r $repo snapshots --password "$password"
+			
+			echo -e "Enter snapshot id:"
+			read snapshot_to_restore
+			
+			#Now we get snapshot data to see if it's valid
+			result=$(sudo rustic -r $repo $caching snapshots $snapshot_to_restore --json --password "$password" 2>>/dev/null)
+			if [ "$result" == "" ] || [ "$result" == "[]" ]; then
+				echo "Error: no suitable id found for $snapshot_to_restore"
+				exit 1
+			fi
 		fi
 		
 		install_jq
@@ -1251,10 +1290,35 @@ merge() {
 	fi
 }
 
+filesize() {
+
+	if [ "$ids" == "" ]; then
+	
+		echo -e "Getting latest snapshot"
+		ids=$(get_latest_snapshot "$repo" "$password" "$path" "id")
+	fi
+	echo -e "Latest ID: $ids"
+	# Add your snapshots logic here
+	sudo rustic restore -n -r $repo $caching restore $ids:$path --password "$password"
+}
+
 info() {
 	echo "Viewing snapshots..."
 	# Add your snapshots logic here
 	sudo rustic repoinfo -r $repo --password "$password"
+}
+
+ls() {
+	# Add your snapshots logic here
+
+	if [ "$ids" == "" ]; then
+	
+		echo -e "Getting latest snapshot"
+		ids=$(get_latest_snapshot "$repo" "$password" "$path" "id")
+	fi
+	echo -e "Latest ID: $ids"
+	
+	sudo rustic ls --repository $repo $caching $ids:$path --password "$password"
 }
 
 prune() {
@@ -1413,6 +1477,18 @@ case "$primary_command" in
 
   "info")
     info
+    ;;
+
+  "ls")
+    list
+    ;;
+
+  "list")
+    list
+    ;;
+
+  "size")
+    filesize
     ;;
 
   "prune")
