@@ -6,6 +6,7 @@ demo="false"
 log="true"
 rustic_cache="false"
 rustic_verbose="true"
+ignore_searching_mounted_folders="true"
 #set -x
 #NO LONGER NEEDED/USED as the list allows multiple mysql entries with a seperator
 #specify your default db creds here if the site is not laravel or wordpress and it's a local database
@@ -34,8 +35,8 @@ comma_placeholder="__comma__"
 #used in csv file to separate multiple db credentials
 db_seperator="||"
 	
-system_paths_for_backup="/etc/exports /etc/my.cnf /etc/hosts /etc/fstab /etc/dovecot /etc/postfix /etc/pure-ftpd /var/spool/cron/root /etc/ssmtp /etc/yum.conf /etc/csf /root/ /etc/nagios /etc/snmp /etc/ssh /etc/sudoers"
-paths_to_exclude=("cache" "backup" "backups" ".cache" "tmp" "temp")
+system_paths_for_backup="/etc/exports /etc/my.cnf /etc/hosts /etc/fstab /etc/dovecot /etc/postfix /etc/pure-ftpd /var/spool/cron/root /etc/ssmtp /etc/yum.conf /etc/csf /root/ /etc/nagios /etc/snmp /etc/ssh /etc/sudoers /etc/systemd/system/mnt-GDrive.mount /etc/msmtprc /etc/systemd/system/mnt-GDrive.automount"
+paths_to_exclude=("cache" "backup" "backups" ".cache" "tmp" ".tmp" "temp")
 #END MODIFY HERE
 
 
@@ -60,12 +61,24 @@ else
 	verbose="--verbose"
 fi
 
+if [ "$ignore_searching_mounted_folders" == "true" ]; then
+	ignore_mounted="-mount"
+else
+	ignore_mounted=""
+fi
+
 # Set the PATH explicitly
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
+# Define color codes
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+NC='\033[0m' # No Color
+
 # Check if a command argument is provided
 if [ $# -lt 1 ]; then
-  echo -e "Usage: $0 [backup | delete | restore | snapshots | merge | info | prune]\n
+  echo -e "${YELLOW}Usage: $0 [backup | delete | restore | snapshots | merge | info | prune]${NC}\n
   [additional flags...]
   [global]
   -r repo					e.g. -r /home/backup | -r \"rclone:WASABI\"
@@ -430,7 +443,7 @@ remove_at_job() {
 extract_db_credentials() {
   # Search for .env and wp-config.php files in the current directory and its subdirectories
   
-	find $1 -type f -name ".env" -o -name "wp-config.php" | while read -r file; do
+	find $1 $ignore_mounted -type f \( -name .env -o -name wp-config.php \) | while read -r file; do
 		# Check if the file exists and is not empty
 		if [ ! -s "$file" ]; then
 		  continue
@@ -664,14 +677,16 @@ backup() {
 		temp_db_path="$base$bucket/dbs/"
 		sudo mkdir -p $temp_db_path 2>>/dev/null
 		#add the files exported using the -m list
-		echo -e "Searching for databases to backup..."
+		echo -e "${YELLOW}Searching for databases to backup...${NC}"
   
 		if [ "$demo" == "true" ]; then
 			echo -e "find $path -type f -name \".env\" -o -name \"wp-config.php\""
 			echo -e "$path$(get_all_dbs "$repo" "$path" "$temp_db_path")"
+			echo -e "${YELLOW}Completed Search for databases to backup...${NC}"
 			echo -e "sudo rustic -r $repo $verbose $caching backup $path --password \"NOT_REAL_PASSWORD\" $exclude"
 		else
 			path+=$(get_all_dbs "$repo" "$path" "$temp_db_path")
+			echo -e "${YELLOW}Completed Search for databases to backup...${NC}"
 			if [ "$path" == "" ]; then
 				echo -e "Nothing to backup!"
 			fi
@@ -692,7 +707,7 @@ backup() {
 		echo -e ""
 		# Check if the file exists
 		if [ ! -f "$list" ]; then
-			echo "File does not exist: $list"
+			echo -e "File does not exist: $list"
 			exit 1
 		fi
 		
@@ -979,16 +994,16 @@ backup() {
 			fi
 			
 			#--------------------------------------------------Search For DBs--------------------------------------------------
-			echo -e "Searching for databases to backup..."
+			echo -e "${YELLOW}Searching for databases to backup...${NC}"
   
 			if [ "$demo" == "true" ]; then
 				echo -e "find $path -type f -name \".env\" -o -name \"wp-config.php\" "
 				echo -e "$path$(get_all_dbs "$repo" "$files_path" "$temp_db_path" "$remote")"
-				echo -e "Searching for databases to backup COMPLETED!!"
+				echo -e "${YELLOW}Completed Search for databases to backup...${NC}"
 				echo -e "sudo rustic -r $repo $verbose $caching backup $path --password \"NOT_REAL_PASSWORD\" $exclude"
 			else
 				path+=$(get_all_dbs "$repo" "$files_path" "$temp_db_path" "$remote")
-				echo -e "Searching for databases to backup COMPLETED!!\n"
+				echo -e "${YELLOW}Completed Search for databases to backup...${NC}"
 				
 				#add the files exported using the -m list
 				eval "sudo rustic -r $repo $verbose $caching backup $path $exclude --password \"$password\""
@@ -1012,7 +1027,7 @@ backup() {
 			#--------------------------------------------------CLEANUP--------------------------------------------------
 			
 			#cleanup
-			echo -e "\nCleaning up!!\n"
+			echo -e "\n${GREEN}Cleaning up!!${NC}\n"
 			#rclone unmount if mounted
 			if [[ -v rmount_ip ]]; then
 				echo -e "Unmounting drive\n"
@@ -1034,10 +1049,10 @@ backup() {
 			
 			sudo rm -rf $temp_db_path >/dev/null 2>&1
 			pkill -f "rclone serve restic"
-			echo -e "\n---------------------------- $(date +"%a %d %b %Y - %I:%M%p") ------------------------------\n\n"
+			echo -e "\n${GREEN}---------------------------- $(date +"%a %d %b %Y - %I:%M%p") ------------------------------${NC}\n\n"
 		done < "$list"
 		
-		echo -e "Removing temporary files & directories\n"
+		echo -e "${YELLOW}Removing temporary files & directories${NC}\n"
 		all_temp_paths=$(trim "$all_temp_paths")
 		if [ "$all_temp_paths" != "" ];then
 			all_temp_paths=($all_temp_paths)
@@ -1087,7 +1102,7 @@ system_backup() {
 	if [ "$primary_command" != "system_backup" ]; then
 	
 		if [ $# -lt 1 ] || [ $# -gt 2 ]; then
-			echo "Usage: system_backup <repo> [bucket]"
+			echo -e "${YELLOW}Usage: system_backup <repo> [bucket]${NC}"
 			return 1
 		fi
 
@@ -1095,12 +1110,11 @@ system_backup() {
 		if [ $# -eq 2 ]; then
 			repo="$repo:$2"
 		fi
-    fi
-	if [ -z "$flag_repo" ]; then
+    elif [ -z "$flag_repo" ]; then
 		repo="$backup_base/system"
 	fi
 	
-	echo -e "---ATTEMPTING TO BACKUP SYSTEM FILES!!---"
+	echo -e "${GREEN}---ATTEMPTING TO BACKUP SYSTEM FILES!!---${NC}"
   
 	if [ "$demo" != "true" ]; then
 		sudo rustic init -r $repo $verbose $caching --password "$password"
@@ -1121,7 +1135,7 @@ system_backup() {
 		system_paths_for_backup+=" $path"
 	  else
 		# If the path doesn't exist, print a warning and continue
-		echo "Warning: Path $path does not exist. Skipping."
+		echo -e "${RED}Warning: ${NC}Path ${RED}$path${NC} does not exist. Skipping."
 	  fi
 	done
   
@@ -1131,7 +1145,7 @@ system_backup() {
 		eval "sudo rustic -r $repo $verbose $caching backup $system_paths_for_backup $exclude --password \"$password\""
 	fi
 	
-	echo -e "---COMPLETED BACKUP OF SYSTEM FILES!!---"
+	echo -e "${GREEN}---COMPLETED BACKUP OF SYSTEM FILES!!---${NC}"
 }
 
 delete() {
@@ -1148,7 +1162,7 @@ delete() {
 		echo -e "Enter snapshot id:"
 		read snapshot_id
 		
-		echo "Performing delete..."
+		echo -e "Performing delete..."
 		# Add your delete logic here
   
 		if [ "$demo" == "true" ]; then
@@ -1159,10 +1173,10 @@ delete() {
 	else
 		local ids=($ids)
 		for snapshot_id in "${ids[@]}"; do
-			echo "Processing Snapshot ID: $snapshot_id"
+			echo -e "Processing Snapshot ID: $snapshot_id"
 			# Add your logic to process additional options here
 		  
-			echo "Performing delete..."
+			echo -e "Performing delete..."
 			# Add your delete logic here
   
 			if [ "$demo" == "true" ]; then
@@ -1192,7 +1206,7 @@ restore() {
 				#snapshot_to_restore=$(get_latest_snapshot "$repo" "$password" "$path" "id")
 				snapshot_to_restore="latest"
 				if [ "$snapshot_to_restore" == "" ] || [ "$snapshot_to_restore" == "[]" ]; then
-				echo "Error: no suitable id found for $snapshot_to_restore"
+				echo -e "Error: no suitable id found for $snapshot_to_restore"
 				exit 1
 			fi
 		else
@@ -1207,7 +1221,7 @@ restore() {
 			#Now we get snapshot data to see if it's valid
 			result=$(sudo rustic -r $repo $verbose $caching snapshots $snapshot_to_restore --json --password "$password" 2>>/dev/null)
 			if [ "$result" == "" ] || [ "$result" == "[]" ]; then
-				echo "Error: no suitable id found for $snapshot_to_restore"
+				echo -e "Error: no suitable id found for $snapshot_to_restore"
 				exit 1
 			fi
 		fi
@@ -1249,9 +1263,9 @@ restore() {
 
 			# Check the user's input
 			if [ "$all" = "y" ] || [ "$all" = "Y" ]; then
-				echo "Processing... You chose to proceed."
+				echo -e "Processing... You chose to proceed."
 				# Add your processing code here
-				echo "Performing restore... to $destination"
+				echo -e "Performing restore... to $destination"
 				# Add your restore logic here
   
 				if [ "$demo" == "true" ]; then
@@ -1289,7 +1303,7 @@ restore() {
 		#Now we get snapshot data to see if it's valid
 		result=$(sudo rustic -r $repo $verbose $caching snapshots $snapshot_to_restore --json --password "$password" 2>>/dev/null)
 		if [ "$result" == "" ]; then
-			echo "Error: no suitable id found for $snapshot_to_restore"
+			echo -e "Error: no suitable id found for $snapshot_to_restore"
 			exit 1
 		fi
 		snapshot_data=$(jq -c '.[0][1][0]' <<< "$result")
@@ -1315,17 +1329,17 @@ restore() {
 		fi
 	fi
 	
-	echo "Restored to $destination"
+	echo -e "Restored to $destination"
 }
 
 snapshots() {
-	echo "Viewing snapshots..."
+	echo -e "Viewing snapshots..."
 	# Add your snapshots logic here
 	sudo rustic -r $repo $verbose $caching snapshots $ids --password "$password"
 }
 
 merge() {
-	echo "Merging snapshots..."
+	echo -e "Merging snapshots..."
 	# Add your merge logic here
 	
 	if [ "$ids" != "" ];then
@@ -1344,7 +1358,7 @@ merge() {
 		#Now we get snapshot data to see if it's valid
 		result=$(sudo rustic -r $repo $verbose $caching snapshots --json --password "$password" 2>>/dev/null)
 		if [ "$result" == "" ]; then
-			echo "Error: no snapshots to merge"
+			echo -e "Error: no snapshots to merge"
 			exit 1
 		fi
 		
@@ -1384,7 +1398,7 @@ filesize() {
 }
 
 info() {
-	echo "Viewing snapshots..."
+	echo -e "Viewing snapshots..."
 	# Add your snapshots logic here
 	sudo rustic repoinfo -r $repo --password "$password"
 }
@@ -1400,7 +1414,7 @@ list() {
 }
 
 prune() {
-	echo "Viewing snapshots..."
+	echo -e "Viewing snapshots..."
 	# Add your snapshots logic here
 	instant=""
 	if [[ -v flag_clean ]]; then
@@ -1425,7 +1439,7 @@ additional_options=("$@")  # Store the remaining arguments
 #exit 1
 #END TEST AREA
 
-echo -e "\n-----------------START $(date +"%a %d %b %Y - %I:%M%p")-----------------\n"
+echo -e "\n${GREEN}-----------------START $(date +"%a %d %b %Y - %I:%M%p")-----------------${NC}\n"
 
 while getopts "b:cd:e:i:k:l:m:p:r:s:x:y:" flag
 do
@@ -1531,7 +1545,7 @@ else
 fi
 
 if [ "$demo" == "true" ]; then
-	echo -e "---RUNNING AS DEMO!!---"
+	echo -e "${GREEN}---RUNNING AS DEMO!!---${NC}"
 fi
 
 # Process the command using a case statement
@@ -1589,9 +1603,9 @@ case "$primary_command" in
     ;;
 
   *)
-    echo "Invalid command: $command"
-    echo "Usage: $0 [backup | delete | restore | snapshots]"
+    echo -e "${RED}Invalid command: $command${NC}"
+    echo -e "${YELLOW}Usage: $0 [backup | delete | restore | snapshots]${NC}"
     exit 1
     ;;
 esac
-echo -e "\n-----------------END $(date +"%a %d %b %Y - %I:%M%p")-----------------\n"
+echo -e "\n${GREEN}-----------------END $(date +"%a %d %b %Y - %I:%M%p")-----------------${NC}\n"
