@@ -71,7 +71,7 @@ fi
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Define color codes
-RED='\033[0;31m'
+RED='\033[1;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 NC='\033[0m' # No Color
@@ -129,6 +129,8 @@ if [ $# -lt 1 ]; then
   "
   exit 1
 fi
+
+echo y | rustic self-update
 
 # Read the command argument
 primary_command="$1"
@@ -358,8 +360,10 @@ secure_dump() {
 	# Create a MySQL configuration file
 	original_pass=$(re_comma "$3")
 	mysql_tmp_config=$(gen_tmp_file)
+	host=${1%%:*}
+	
 	echo "[client]" > $mysql_tmp_config
-	echo "host='$1'" >> $mysql_tmp_config
+	echo "host='$host'" >> $mysql_tmp_config
 	echo "user='$2'" >> $mysql_tmp_config
 	echo "password='$original_pass'" >> $mysql_tmp_config
 	sudo chmod 600 $mysql_tmp_config
@@ -466,10 +470,10 @@ extract_db_credentials() {
 			db_pass=$(grep -E -o '^DB_PASSWORD="?([^"]+)"?' "$file" | sed 's/DB_PASSWORD=//;s/"//g')
 			;;
 		  "wp-config")
-			db_host=$(grep -E -o "define\(\s?'DB_HOST'\s?,\s?'([^']+)" "$file" | sed -E "s/define\\(\s?'DB_HOST',\s?'//")
-			db_name=$(grep -E -o "define\(\s?'DB_NAME'\s?,\s?'([^']+)" "$file" | sed -E "s/define\\(\s?'DB_NAME',\s?'//")
-			db_user=$(grep -E -o "define\(\s?'DB_USER'\s?,\s?'([^']+)" "$file" | sed -E "s/define\\(\s?'DB_USER',\s?'//")
-			db_pass=$(grep -E -o "define\(\s?'DB_PASSWORD'\s?,\s?'([^']+)" "$file" | sed -E "s/define\\(\s?'DB_PASSWORD',\s?'//")
+			db_host=$(grep -E -o "define\(\s?[\"']DB_HOST[\"']\s?,\s?[\"']([^\"']+)[\"']" "$file" | sed -E "s/define\(\s?[\"']DB_HOST[\"'],\s?[\"']([^\"']+)[\"']/\1/")
+			db_name=$(grep -E -o "define\(\s?[\"']DB_NAME[\"']\s?,\s?[\"']([^\"']+)[\"']" "$file" | sed -E "s/define\(\s?[\"']DB_NAME[\"'],\s?[\"']([^\"']+)[\"']/\1/")
+			db_user=$(grep -E -o "define\(\s?[\"']DB_USER[\"']\s?,\s?[\"']([^\"']+)[\"']" "$file" | sed -E "s/define\(\s?[\"']DB_USER[\"'],\s?[\"']([^\"']+)[\"']/\1/")
+			db_pass=$(grep -E -o "define\(\s?[\"']DB_PASSWORD[\"']\s?,\s?[\"']([^\"']+)[\"']" "$file" | sed -E "s/define\(\s?[\"']DB_PASSWORD[\"'],\s?[\"']([^\"']+)[\"']/\1/")
 			;;
 		  *)
 			continue
@@ -1234,28 +1238,29 @@ restore() {
 		if [ "$bucket" == "" ];then
 			base=$(strip_trailing_slashes "$base")
 		fi
-		restore_path="$base$bucket/restored/"
-		sudo mkdir -p $restore_path
 		
-		while true; do
-			echo -e "Restore to default location? y/n"
-			echo -e "If no, it will be restored to a temporary location. $restore_path"
-			read destination
+		if [ "$path" != "" ]; then
+			while true; do
+				echo -e "Restore to $path? y/n"
+				echo -e "If no, it will be restored to a temporary location. $destination"
+				read response
 
-			# Check the user's input
-			if [ "$destination" = "y" ] || [ "$destination" = "Y" ]; then
-				# Add your processing code here
-				destination="$path"
-				break  # Exit the loop if valid input is received
-			elif [ "$destination" = "n" ] || [ "$destination" = "N" ]; then
-				sudo mkdir -p $restore_path
-				# Add any actions to take when the user chooses "no"
-				destination="$restore_path"
-				break  # Exit the loop if valid input is received
-			else
-				echo -e "Invalid input. Please enter 'y' for yes or 'n' for no."
-			fi
-		done
+				# Check the user's input
+				if [ "$response" = "y" ] || [ "$response" = "Y" ]; then
+					# Add your processing code here
+					destination="$path"
+					break  # Exit the loop if valid input is received
+				elif [ "$response" = "n" ] || [ "$response" = "N" ]; then
+					# Add any actions to take when the user chooses "no"
+					break  # Exit the loop if valid input is received
+				else
+					echo -e "Invalid input. Please enter 'y' for yes or 'n' for no."
+				fi
+			done
+		else
+			echo -e "Backup will be restored to a temporary location. $destination"
+		fi
+		sudo mkdir -p $destination
 		
 		while true; do
 			echo -e "Restore all? y/n"
