@@ -396,46 +396,47 @@ check_paths() {
 }
 
 get_latest_snapshot() {
-	#Get snapshot data
-	result=$(sudo rustic -r $1 $caching snapshots --json --password "$2" 2>>/dev/null)
-	if [ "$result" == "" ]; then
-		echo ""
-		return
-	fi
-	
-	# Path to compare
-	path="$3"
-
-	# Initialize variables
-	latest_time=""
-	latest_id=""
-
-	# Iterate over each object in the array
-	while read -r snapshot_data; do
-		# Extract time and paths
-		#time format = "2023-11-03T10:15:01.886925223-04:00"
-		time=$(jq -r '.time' <<< "$snapshot_data")
-		id=$(jq -r '.id' <<< "$snapshot_data")
-		paths=$(jq -r '.paths' <<< "$snapshot_data")
-		
-		# Convert times to Unix timestamps
-		time_timestamp=$(date -d "$time" +%s)
-		latest_time_timestamp=$(date -d "$latest_time" +%s)
-
-		# Check if the paths match
-		if [[ "$paths" == *"$path"* ]]; then
-			# Check if time is more recent
-			if [ "$latest_time" == "" ] || [ "$time_timestamp" -ge "$latest_time_timestamp" ]; then
-				latest_time="$time"
-				latest_id="$id"
-			fi
-		fi
-	done <<< "$(jq -c '.[0][1][]' <<< "$result")"
-	if [ "$4" == "id" ];then
-		echo "$latest_id"
-	elif [ "$4" == "time" ];then
-		echo "$latest_time"
-	fi
+    # Get snapshot data
+    result=$(sudo rustic -r "$1" "$caching" snapshots --json --password "$2" 2>>/dev/null)
+    if [ -z "$result" ]; then
+        echo ""
+        return
+    fi
+    
+    # Path to compare
+    path="$3"
+    # Initialize variables
+    latest_time=""
+    latest_id=""
+    
+    # Use process substitution to avoid subshell issues
+    while read -r snapshot_group; do
+        while read -r snapshot_data; do
+            # Extract time and paths
+            time=$(echo "$snapshot_data" | jq -r '.time')
+            id=$(echo "$snapshot_data" | jq -r '.id')
+            paths=$(echo "$snapshot_data" | jq -r '.paths | join(" ")')
+            
+            # Convert times to Unix timestamps
+            time_timestamp=$(date -d "$time" +%s 2>/dev/null)
+            latest_time_timestamp=$(date -d "$latest_time" +%s 2>/dev/null || echo 0)
+            
+            # Check if the paths match
+            if [[ "$paths" == *"$path"* ]]; then
+                # Check if time is more recent
+                if [ -z "$latest_time" ] || [ "$time_timestamp" -gt "$latest_time_timestamp" ]; then
+                    latest_time="$time"
+                    latest_id="$id"
+                fi
+            fi
+        done < <(echo "$snapshot_group" | jq -c '.[1][]')
+    done < <(echo "$result" | jq -c '.[]')
+    
+    if [ "$4" == "id" ]; then
+        echo "$latest_id"
+    elif [ "$4" == "time" ]; then
+        echo "$latest_time"
+    fi
 }
 
 get_at_time() {
